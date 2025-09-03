@@ -210,6 +210,74 @@ with st.container(border=True):
     wide_plot(fig5, key="stickiness", height=420)
 
 
+# ============================================================
+# 6) 기간별 카트 전환율 (Dual): trafficSource Top5 vs deviceCategory
+#    - 좌축: trafficSource Top5 라인
+#    - 우축: deviceCategory 라인(Desktop/Mobile/Tablet 등)
+#    - 단일 일자 선택 시 '시간대별(시)', 다중 일자/기간이면 '월별'
+# ============================================================
+with st.container(border=True):
+    st.subheader("6. 기간별 카트 전환율 — Source Top5 (좌) vs Device (우)")
+
+    if dff.empty:
+        st.info("표시할 데이터가 없습니다.")
+    else:
+        # 시간 축 결정 (단일 일자면 시간대, 아니면 월)
+        single_day_auto = dff["visitStartTime"].dt.normalize().nunique() == 1
+        dff = dff.assign(hour=dff["visitStartTime"].dt.hour,
+                         ym=dff["visitStartTime"].dt.to_period("M"))
+        time_key = "hour" if single_day_auto else "ym"
+        x_label  = "시" if single_day_auto else "년-월"
+
+        # 카트 전환 플래그
+        dff_cart = dff.assign(cart=(dff["addedToCart"] > 0).astype(int))
+
+        # trafficSource Top5 (세션 수 기준)
+        top5_sources = (dff_cart.groupby("trafficSource")["cart"]
+                        .size().sort_values(ascending=False).head(5).index.tolist())
+        ts = (dff_cart[dff_cart["trafficSource"].isin(top5_sources)]
+              .groupby([time_key, "trafficSource"])["cart"]
+              .mean().reset_index())
+        if time_key == "ym":
+            ts["x"] = ts["ym"].astype(str)
+        else:
+            ts["x"] = ts["hour"]
+
+        # deviceCategory
+        dc = (dff_cart.groupby([time_key, "deviceCategory"])["cart"]
+              .mean().reset_index())
+        if time_key == "ym":
+            dc["x"] = dc["ym"].astype(str)
+        else:
+            dc["x"] = dc["hour"]
+
+        # ---- Dual Axis Figure ----
+        from plotly.subplots import make_subplots
+        fig = make_subplots(specs=[[{"secondary_y": True}]])
+
+        # 좌축: Source Top5
+        for src, sub in ts.groupby("trafficSource"):
+            fig.add_trace(
+                go.Scatter(x=sub["x"], y=sub["cart"],
+                           mode="lines+markers", name=f"SRC: {src}"),
+                secondary_y=False
+            )
+
+        # 우축: Device
+        for dev, sub in dc.groupby("deviceCategory"):
+            fig.add_trace(
+                go.Scatter(x=sub["x"], y=sub["cart"],
+                           mode="lines+markers", name=f"DEV: {dev}",
+                           line=dict(dash="dash")),
+                secondary_y=True
+            )
+
+        fig.update_xaxes(title_text=x_label)
+        fig.update_yaxes(title_text="카트 전환율 (Source Top5)", tickformat=".0%", secondary_y=False)
+        fig.update_yaxes(title_text="카트 전환율 (Device)",      tickformat=".0%", secondary_y=True)
+        wide_plot(fig, key="dual_cart_src_dev", height=460)
+
+
 
 
 
