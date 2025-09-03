@@ -211,36 +211,31 @@ with st.container(border=True):
 
 
 # ============================================================
-# trafficSource Top5 비중 (일자별)
-#  - y축: 일자별 비중 = 해당 소스 세션수 / 해당 일 총 세션수
-#  - x축: 일자
+# trafficSource Top5 비중 (월별)
+#  - y축: 월별 비중 = 해당 소스 세션수 / 해당 월 총 세션수
+#  - x축: 년-월
 #  - Top5는 현재 필터(dff) 기준 전체 기간 합계 상위 5개
 # ============================================================
 with st.container(border=True):
-    st.subheader("trafficSource Top5 비중 (일자별)")
+    st.subheader("trafficSource Top5 비중 (월별)")
 
-    # 가드: 필수 컬럼 & 데이터 확인
-    needed_cols = {"trafficSource", "visitStartTime"}
-    if dff.empty or not needed_cols.issubset(dff.columns):
+    needed = {"trafficSource", "visitStartTime"}
+    if dff.empty or not needed.issubset(dff.columns):
         st.info("표시할 데이터가 없습니다. (필수 컬럼 누락 또는 필터 결과 없음)")
     else:
         df_src = dff.copy()
-
         # 안전 파싱
         df_src["visitStartTime"] = pd.to_datetime(df_src["visitStartTime"], errors="coerce")
         df_src = df_src.dropna(subset=["visitStartTime"])
         if df_src.empty:
             st.info("표시할 데이터가 없습니다. (유효한 visitStartTime 없음)")
         else:
-            df_src["date"] = df_src["visitStartTime"].dt.date
+            df_src["ym"] = df_src["visitStartTime"].dt.to_period("M")
             df_src["trafficSource"] = (
-                df_src["trafficSource"]
-                .astype(str)
-                .fillna("(unknown)")
-                .replace({"": "(unknown)"})
+                df_src["trafficSource"].astype(str).fillna("(unknown)").replace({"": "(unknown)"})
             )
 
-            # Top5 산출 (현재 필터 범위 전체 기준, 세션 수 상위)
+            # Top5 산출 (전체 기간 합계 상위 5개)
             top5 = (
                 df_src["trafficSource"]
                 .value_counts(dropna=False)
@@ -249,58 +244,60 @@ with st.container(border=True):
                 .tolist()
             )
 
-            # 일자별 소스별 세션 수
-            daily_src = (
+            # 월별 소스별 세션 수
+            monthly_src = (
                 df_src[df_src["trafficSource"].isin(top5)]
-                .groupby(["date", "trafficSource"])
+                .groupby(["ym", "trafficSource"])
                 .size()
                 .rename("cnt")
                 .reset_index()
             )
-
-            if daily_src.empty:
+            if monthly_src.empty:
                 st.info("선택된 기간/필터에 해당하는 Top5 소스 데이터가 없습니다.")
             else:
-                # 일자별 전체 세션 수
-                daily_total = df_src.groupby("date").size().rename("total").reset_index()
+                # 월별 전체 세션 수
+                monthly_total = df_src.groupby("ym").size().rename("total").reset_index()
 
                 # 비중 계산 = cnt / total
-                merged = daily_src.merge(daily_total, on="date", how="left")
+                merged = monthly_src.merge(monthly_total, on="ym", how="left")
                 merged["share"] = np.where(merged["total"] > 0, merged["cnt"] / merged["total"], 0.0)
 
-                # 결측 일자-소스 조합 0으로 채워 라인 끊김 방지
+                # 모든 월 인덱스 포함(빈 달 0으로 채움) → 라인 끊김 방지
+                all_months = pd.period_range(df_src["ym"].min(), df_src["ym"].max(), freq="M")
                 piv = (
-                    merged.pivot(index="date", columns="trafficSource", values="share")
-                    .sort_index()
+                    merged.pivot(index="ym", columns="trafficSource", values="share")
+                    .reindex(all_months)
                     .fillna(0.0)
                 )
-                long = piv.reset_index().melt(id_vars="date", var_name="trafficSource", value_name="share")
+
+                # 그림용 문자열 축 준비
+                piv["ym_str"] = piv.index.astype(str)
+                long = piv.reset_index(drop=True).melt(id_vars="ym_str", var_name="trafficSource", value_name="share")
 
                 # 시각화
                 fig = px.line(
                     long,
-                    x="date",
+                    x="ym_str",
                     y="share",
                     color="trafficSource",
                     markers=True,
-                    labels={"date": "일자", "share": "비중", "trafficSource": "Traffic Source (Top5)"},
+                    labels={"ym_str": "년-월", "share": "비중", "trafficSource": "Traffic Source (Top5)"},
                 )
                 fig.update_yaxes(tickformat=".0%", rangemode="tozero")
-                fig.update_traces(
-                    hovertemplate="%{x|%Y-%m-%d}<br>%{legendgroup}: %{y:.1%}<extra></extra>"
-                )
-                # Top5 순서 고정(범례/색상 안정화)
+                fig.update_traces(hovertemplate="%{x}<br>%{legendgroup}: %{y:.1%}<extra></extra>")
                 fig.update_layout(
                     legend_title_text="Traffic Source (Top5)",
-                    xaxis_title="일자",
+                    xaxis_title="년-월",
                     yaxis_title="전체 대비 비중",
                     margin=dict(l=30, r=30, t=50, b=30),
+                    xaxis=dict(categoryorder="array", categoryarray=sorted(long["ym_str"].unique())),
                 )
 
                 try:
-                    wide_plot(fig, key="ts_top5_share_daily", height=440)
+                    wide_plot(fig, key="ts_top5_share_monthly", height=440)
                 except NameError:
-                    st.plotly_chart(fig, use_container_width=True, key="ts_top5_share_daily")
+                    st.plotly_chart(fig, use_container_width=True, key="ts_top5_share_monthly")
+
 
 
 
@@ -441,6 +438,7 @@ with st.container(border=True):
         fig.update_yaxes(title_text="평균 페이지뷰/세션 (Source Top5)", secondary_y=False)
         fig.update_yaxes(title_text="평균 페이지뷰/세션 (Device)",      secondary_y=True)
         wide_plot(fig, key="dual_stickiness_src_dev", height=460)
+
 
 
 
