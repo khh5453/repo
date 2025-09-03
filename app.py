@@ -211,6 +211,88 @@ with st.container(border=True):
 
 
 # ============================================================
+# N) 기간별 유니크 사용자 — Source Top5 (좌) vs Device (우)  [Dual Axis]
+#    y축: unique fullVisitorId (명)
+#    단일 일자 선택 시 '시간대별(시)', 여러 일자/기간이면 '월별'
+# ============================================================
+with st.container(border=True):
+    st.subheader("기간별 유니크 사용자 — Source Top5 (좌) vs Device (우)")
+
+    if dff.empty or "fullVisitorId" not in dff.columns:
+        st.info("표시할 데이터가 없습니다.")
+    else:
+        dfu = dff.copy()
+        dfu["hour"] = dfu["visitStartTime"].dt.hour
+        dfu["ym"]   = dfu["visitStartTime"].dt.to_period("M")
+
+        # 단일 일자 여부로 시간 축 결정
+        single_day_auto = dfu["visitStartTime"].dt.normalize().nunique() == 1
+        time_key = "hour" if single_day_auto else "ym"
+        x_label  = "시" if single_day_auto else "년-월"
+
+        # ---- 좌축: trafficSource Top5 (유니크 사용자 총량 기준) ----
+        top5_sources = (
+            dfu.groupby("trafficSource")["fullVisitorId"]
+               .nunique()
+               .sort_values(ascending=False)
+               .head(5).index.tolist()
+        )
+
+        src = (
+            dfu[dfu["trafficSource"].isin(top5_sources)]
+            .groupby([time_key, "trafficSource"])["fullVisitorId"]
+            .nunique()
+            .reset_index(name="users")
+        )
+        src["x"] = src[time_key].astype(str) if time_key == "ym" else src[time_key]
+
+        # ---- 우축: deviceCategory (유니크 사용자) ----
+        dev = (
+            dfu.groupby([time_key, "deviceCategory"])["fullVisitorId"]
+               .nunique()
+               .reset_index(name="users")
+        )
+        dev["x"] = dev[time_key].astype(str) if time_key == "ym" else dev[time_key]
+
+        # ---- Dual Axis Figure ----
+        fig = make_subplots(specs=[[{"secondary_y": True}]])
+
+        # 좌축: Source Top5 라인
+        for src_name, sub in src.groupby("trafficSource"):
+            fig.add_trace(
+                go.Scatter(
+                    x=sub["x"], y=sub["users"],
+                    mode="lines+markers",
+                    name=f"SRC: {src_name}"
+                ),
+                secondary_y=False
+            )
+
+        # 우축: Device 라인(점선)
+        for dev_name, sub in dev.groupby("deviceCategory"):
+            fig.add_trace(
+                go.Scatter(
+                    x=sub["x"], y=sub["users"],
+                    mode="lines+markers",
+                    name=f"DEV: {dev_name}",
+                    line=dict(dash="dash")
+                ),
+                secondary_y=True
+            )
+
+        fig.update_xaxes(title_text=x_label)
+        fig.update_yaxes(title_text="유니크 사용자 수 (Source Top5)", secondary_y=False)
+        fig.update_yaxes(title_text="유니크 사용자 수 (Device)",      secondary_y=True)
+
+        # 보기 좋게 천 단위 표기
+        fig.update_yaxes(ticksuffix="", separatethousands=True, secondary_y=False)
+        fig.update_yaxes(ticksuffix="", separatethousands=True, secondary_y=True)
+
+        wide_plot(fig, key="dual_unique_users_src_dev", height=460)
+
+
+
+# ============================================================
 # 6) 기간별 카트 전환율 (Dual): trafficSource Top5 vs deviceCategory
 #    - 좌축: trafficSource Top5 라인
 #    - 우축: deviceCategory 라인(Desktop/Mobile/Tablet 등)
@@ -345,6 +427,7 @@ with st.container(border=True):
         fig.update_yaxes(title_text="평균 페이지뷰/세션 (Source Top5)", secondary_y=False)
         fig.update_yaxes(title_text="평균 페이지뷰/세션 (Device)",      secondary_y=True)
         wide_plot(fig, key="dual_stickiness_src_dev", height=460)
+
 
 
 
