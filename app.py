@@ -205,117 +205,118 @@ with st.container(border=True):
 #     - 단일 국가 선택 후 도시 다중선택 가능
 #     - 표시할 지역 수 Top-N 옵션, 7일 이동평균 스위치
 # ============================================================
-with st.container(border=True):
-    st.subheader("6. 지역별 지표 (일자별)")
+# with st.container(border=True):
+#     st.subheader("6. 지역별 지표 (일자별)")
 
-    data_geo = dff.copy()
-    data_geo["date"] = pd.to_datetime(data_geo["visitStartTime"]).dt.date
+#     data_geo = dff.copy()
+#     data_geo["date"] = pd.to_datetime(data_geo["visitStartTime"]).dt.date
 
-    # --- 상단 인라인 필터 (본문) ---
-    f1, f2, f3, f4 = st.columns([1.2, 1.1, 1.1, 1.0])
-    with f1:
-        metric_opt = st.selectbox("지표", ["카트 전환율", "재방문율"], index=0, key="geo_metric")
-    with f2:
-        level = st.radio("지역 레벨", ["country", "city"], index=0, horizontal=True, key="geo_level")
-    with f3:
-        topn = st.slider("표시 지역 수 (Top-N)", 3, 20, 8, 1, help="세션 수 기준 상위 N개 지역만 표시")
-    with f4:
-        smooth = st.toggle("7일 이동평균", value=False, key="geo_smooth")
+#     # --- 상단 인라인 필터 (본문) ---
+#     f1, f2, f3, f4 = st.columns([1.2, 1.1, 1.1, 1.0])
+#     with f1:
+#         metric_opt = st.selectbox("지표", ["카트 전환율", "재방문율"], index=0, key="geo_metric")
+#     with f2:
+#         level = st.radio("지역 레벨", ["country", "city"], index=0, horizontal=True, key="geo_level")
+#     with f3:
+#         topn = st.slider("표시 지역 수 (Top-N)", 3, 20, 8, 1, help="세션 수 기준 상위 N개 지역만 표시")
+#     with f4:
+#         smooth = st.toggle("7일 이동평균", value=False, key="geo_smooth")
 
-    # --- 지역 선택 위젯 (본문, 계단식: country → city) ---
-    sel_countries, sel_cities = None, None
+#     # --- 지역 선택 위젯 (본문, 계단식: country → city) ---
+#     sel_countries, sel_cities = None, None
 
-    if level == "country":
-        # 나라 단위 분석: 국가 다중선택
-        country_pool = sorted(data_geo["country"].dropna().unique().tolist())
-        sel_countries = st.multiselect(
-            "국가 선택",
-            country_pool,
-            # 이전 선택 유지 (있으면), 없으면 앞에서 8개만 기본 선택
-            default=st.session_state.get("geo_countries", country_pool[:min(8, len(country_pool))]),
-            key="geo_countries",
-        )
-        if sel_countries:
-            data_geo = data_geo[data_geo["country"].isin(sel_countries)]
-        dim = "country"
+#     if level == "country":
+#         # 나라 단위 분석: 국가 다중선택
+#         country_pool = sorted(data_geo["country"].dropna().unique().tolist())
+#         sel_countries = st.multiselect(
+#             "국가 선택",
+#             country_pool,
+#             # 이전 선택 유지 (있으면), 없으면 앞에서 8개만 기본 선택
+#             default=st.session_state.get("geo_countries", country_pool[:min(8, len(country_pool))]),
+#             key="geo_countries",
+#         )
+#         if sel_countries:
+#             data_geo = data_geo[data_geo["country"].isin(sel_countries)]
+#         dim = "country"
 
-    else:  # level == "city"
-        # 1) 먼저 '국가'를 복수 선택 → 2) 해당 국가의 '도시'만 후보로 제시
-        ccol, tcol = st.columns([1.2, 2.0])
-        with ccol:
-            country_pool = sorted(data_geo["country"].dropna().unique().tolist())
-            sel_countries = st.multiselect(
-                "국가 선택(도시 후보 제한)",
-                country_pool,
-                default=st.session_state.get("geo_city_countries", []),
-                key="geo_city_countries",
-            )
+#     else:  # level == "city"
+#         # 1) 먼저 '국가'를 복수 선택 → 2) 해당 국가의 '도시'만 후보로 제시
+#         ccol, tcol = st.columns([1.2, 2.0])
+#         with ccol:
+#             country_pool = sorted(data_geo["country"].dropna().unique().tolist())
+#             sel_countries = st.multiselect(
+#                 "국가 선택(도시 후보 제한)",
+#                 country_pool,
+#                 default=st.session_state.get("geo_city_countries", []),
+#                 key="geo_city_countries",
+#             )
 
-        # 국가 선택 결과로 city 후보를 제한
-        if sel_countries:
-            city_source = data_geo[data_geo["country"].isin(sel_countries)]
-        else:
-            city_source = data_geo
+#         # 국가 선택 결과로 city 후보를 제한
+#         if sel_countries:
+#             city_source = data_geo[data_geo["country"].isin(sel_countries)]
+#         else:
+#             city_source = data_geo
 
-        city_pool = sorted(city_source["city"].dropna().unique().tolist())
+#         city_pool = sorted(city_source["city"].dropna().unique().tolist())
 
-        # 이전에 고른 도시들 중 여전히 후보에 있는 것만 기본값으로 유지
-        prev_cities = st.session_state.get("geo_cities", [])
-        default_cities = [c for c in prev_cities if c in city_pool] or city_pool[:min(10, len(city_pool))]
+#         # 이전에 고른 도시들 중 여전히 후보에 있는 것만 기본값으로 유지
+#         prev_cities = st.session_state.get("geo_cities", [])
+#         default_cities = [c for c in prev_cities if c in city_pool] or city_pool[:min(10, len(city_pool))]
 
-        with tcol:
-            sel_cities = st.multiselect(
-                "도시 선택",
-                city_pool,
-                default=default_cities,
-                key="geo_cities",
-            )
+#         with tcol:
+#             sel_cities = st.multiselect(
+#                 "도시 선택",
+#                 city_pool,
+#                 default=default_cities,
+#                 key="geo_cities",
+#             )
 
-        # 실제 데이터 제한
-        if sel_countries:
-            data_geo = data_geo[data_geo["country"].isin(sel_countries)]
-        if sel_cities:
-            data_geo = data_geo[data_geo["city"].isin(sel_cities)]
+#         # 실제 데이터 제한
+#         if sel_countries:
+#             data_geo = data_geo[data_geo["country"].isin(sel_countries)]
+#         if sel_cities:
+#             data_geo = data_geo[data_geo["city"].isin(sel_cities)]
 
-        dim = "city"
+#         dim = "city"
 
 
-    # --- 지표 계산 ---
-    if metric_opt == "카트 전환율":
-        data_geo["metric"] = (data_geo["addedToCart"] > 0).astype(int)
-        y_title = "카트 전환율"
-    else:  # 재방문율
-        data_geo["metric"] = (data_geo["isFirstVisit"] == 0).astype(int)
-        y_title = "재방문율"
+#     # --- 지표 계산 ---
+#     if metric_opt == "카트 전환율":
+#         data_geo["metric"] = (data_geo["addedToCart"] > 0).astype(int)
+#         y_title = "카트 전환율"
+#     else:  # 재방문율
+#         data_geo["metric"] = (data_geo["isFirstVisit"] == 0).astype(int)
+#         y_title = "재방문율"
 
-    # --- 일자별 집계 (지역 x 날짜)
-    grp = data_geo.groupby(["date", dim]).agg(
-        value=("metric", "mean"),
-        sessions=("fullVisitorId", "size")
-    ).reset_index()
+#     # --- 일자별 집계 (지역 x 날짜)
+#     grp = data_geo.groupby(["date", dim]).agg(
+#         value=("metric", "mean"),
+#         sessions=("fullVisitorId", "size")
+#     ).reset_index()
 
-    # 선택 안 했을 때는 세션 수 기준 Top-N만 표시 (라인 난립 방지)
-    if level == "country" and not sel_countries:
-        top_dims = grp.groupby(dim)["sessions"].sum().sort_values(ascending=False).head(topn).index
-        grp = grp[grp[dim].isin(top_dims)]
-    if level == "city" and not sel_cities:
-        top_dims = grp.groupby(dim)["sessions"].sum().sort_values(ascending=False).head(topn).index
-        grp = grp[grp[dim].isin(top_dims)]
+#     # 선택 안 했을 때는 세션 수 기준 Top-N만 표시 (라인 난립 방지)
+#     if level == "country" and not sel_countries:
+#         top_dims = grp.groupby(dim)["sessions"].sum().sort_values(ascending=False).head(topn).index
+#         grp = grp[grp[dim].isin(top_dims)]
+#     if level == "city" and not sel_cities:
+#         top_dims = grp.groupby(dim)["sessions"].sum().sort_values(ascending=False).head(topn).index
+#         grp = grp[grp[dim].isin(top_dims)]
 
-    # --- 7일 이동평균 옵션 ---
-    grp = grp.sort_values(["date", dim])
-    grp["date"] = pd.to_datetime(grp["date"])
-    y_col = "value"
-    if smooth:
-        grp["ma7"] = grp.groupby(dim)["value"].transform(lambda s: s.rolling(7, min_periods=1).mean())
-        y_col = "ma7"
+#     # --- 7일 이동평균 옵션 ---
+#     grp = grp.sort_values(["date", dim])
+#     grp["date"] = pd.to_datetime(grp["date"])
+#     y_col = "value"
+#     if smooth:
+#         grp["ma7"] = grp.groupby(dim)["value"].transform(lambda s: s.rolling(7, min_periods=1).mean())
+#         y_col = "ma7"
 
-    # --- 라인 차트 ---
-    label_dim = "국가" if level == "country" else "도시"
-    fig_geo = px.line(
-        grp, x="date", y=y_col, color=dim, markers=True,
-        labels={"date": "일자", y_col: y_title, dim: label_dim}
-    )
-    fig_geo.update_yaxes(tickformat=".0%")
-    wide_plot(fig_geo, key="geo_metric_plot", height=460)
+#     # --- 라인 차트 ---
+#     label_dim = "국가" if level == "country" else "도시"
+#     fig_geo = px.line(
+#         grp, x="date", y=y_col, color=dim, markers=True,
+#         labels={"date": "일자", y_col: y_title, dim: label_dim}
+#     )
+#     fig_geo.update_yaxes(tickformat=".0%")
+#     wide_plot(fig_geo, key="geo_metric_plot", height=460)
+
 
