@@ -31,8 +31,13 @@ def load_data(path: str = "google.csv.gz"):
     df["hour"] = df["visitStartTime"].dt.hour
 
     not_campaign_tokens = {"(not set)", "not set", "(not provided)", "", "not available in demo dataset"}
-    tc = df["trafficCampaign"].astype(str).str.strip().str.lower().fillna("")
-    df["campaign_flag"] = np.where(~tc.isin(not_campaign_tokens), "캠페인 진행", "캠페인 미진행")
+    if "trafficCampaign" in df.columns:
+        tc = df["trafficCampaign"].astype(str).str.strip().str.lower().fillna("")
+        df["campaign_flag"] = np.where(~tc.isin(not_campaign_tokens), "캠페인 진행", "캠페인 미진행")
+    else:
+        # 컬럼이 없으면 기본값으로 안전하게 처리
+        df["trafficCampaign"] = ""
+        df["campaign_flag"] = "캠페인 미진행"
 
     for c in ["isFirstVisit", "isBounce", "addedToCart", "totalPageviews", "totalTimeOnSite"]:
         if c in df.columns:
@@ -42,7 +47,14 @@ def load_data(path: str = "google.csv.gz"):
             df[c] = df[c].astype(str)
     return df
 
-df = load_data()
+st.caption("App is up. Loading data…")  # 먼저 가벼운 프레임 출력
+
+try:
+    df = load_data()
+except Exception as e:
+    st.error("데이터 로딩 중 오류")
+    st.exception(e)  # 원인 로그를 화면에 표시
+    st.stop()
 
 # 원천 기간 제한
 start_bound = pd.Timestamp("2016-08-01")
@@ -196,6 +208,7 @@ with st.container(border=True):
     fig5 = px.line(stick, x=xcol, y="totalPageviews", markers=True,
                    labels={xcol: xlabel, "totalPageviews": "평균 페이지뷰/세션"})
     wide_plot(fig5, key="stickiness", height=420)
+
 
 
 
