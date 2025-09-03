@@ -211,84 +211,62 @@ with st.container(border=True):
 
 
 # ============================================================
-# N) 기간별 유니크 사용자 — Source Top5 (좌) vs Device (우)  [Dual Axis]
-#    y축: unique fullVisitorId (명)
-#    단일 일자 선택 시 '시간대별(시)', 여러 일자/기간이면 '월별'
+# trafficSource Top5 비중 (각 소스 개수 / 전체 개수)
+# x축: trafficSource Top5, y축: 비중(세션 수 기준)
 # ============================================================
 with st.container(border=True):
-    st.subheader("기간별 유니크 사용자 — Source Top5 (좌) vs Device (우)")
+    st.subheader("trafficSource Top5 비중 (세션 기준)")
 
-    if dff.empty or "fullVisitorId" not in dff.columns:
-        st.info("표시할 데이터가 없습니다.")
+    # 가드: 데이터/컬럼 확인
+    if "trafficSource" not in dff.columns or dff.empty:
+        st.info("표시할 데이터가 없습니다. (trafficSource 컬럼 없음 또는 필터 결과 없음)")
     else:
-        dfu = dff.copy()
-        dfu["hour"] = dfu["visitStartTime"].dt.hour
-        dfu["ym"]   = dfu["visitStartTime"].dt.to_period("M")
-
-        # 단일 일자 여부로 시간 축 결정
-        single_day_auto = dfu["visitStartTime"].dt.normalize().nunique() == 1
-        time_key = "hour" if single_day_auto else "ym"
-        x_label  = "시" if single_day_auto else "년-월"
-
-        # ---- 좌축: trafficSource Top5 (유니크 사용자 총량 기준) ----
-        top5_sources = (
-            dfu.groupby("trafficSource")["fullVisitorId"]
-               .nunique()
-               .sort_values(ascending=False)
-               .head(5).index.tolist()
+        # 안전 캐스팅 + 결측 라벨링
+        df_src = dff.copy()
+        df_src["trafficSource"] = (
+            df_src["trafficSource"]
+            .astype(str)
+            .fillna("(unknown)")
+            .replace({"": "(unknown)"})
         )
 
-        src = (
-            dfu[dfu["trafficSource"].isin(top5_sources)]
-            .groupby([time_key, "trafficSource"])["fullVisitorId"]
-            .nunique()
-            .reset_index(name="users")
-        )
-        src["x"] = src[time_key].astype(str) if time_key == "ym" else src[time_key]
+        # 전체 개수(세션 수)와 Top5 산출
+        counts = df_src["trafficSource"].value_counts(dropna=False)
+        total = int(counts.sum())  # 전체 세션 수
+        if total == 0:
+            st.info("표시할 데이터가 없습니다. (세션 수 0)")
+        else:
+            top5 = counts.head(5)
+            share_df = (top5 / total).reset_index()
+            share_df.columns = ["trafficSource", "share"]
+            # 내림차순 정렬(막대 순서 고정)
+            share_df = share_df.sort_values("share", ascending=False)
 
-        # ---- 우축: deviceCategory (유니크 사용자) ----
-        dev = (
-            dfu.groupby([time_key, "deviceCategory"])["fullVisitorId"]
-               .nunique()
-               .reset_index(name="users")
-        )
-        dev["x"] = dev[time_key].astype(str) if time_key == "ym" else dev[time_key]
-
-        # ---- Dual Axis Figure ----
-        fig = make_subplots(specs=[[{"secondary_y": True}]])
-
-        # 좌축: Source Top5 라인
-        for src_name, sub in src.groupby("trafficSource"):
-            fig.add_trace(
-                go.Scatter(
-                    x=sub["x"], y=sub["users"],
-                    mode="lines+markers",
-                    name=f"SRC: {src_name}"
-                ),
-                secondary_y=False
+            # 시각화
+            import plotly.express as px
+            fig = px.bar(
+                share_df,
+                x="trafficSource",
+                y="share",
+                text=share_df["share"].map(lambda v: f"{v:.1%}"),
+                labels={"trafficSource": "Traffic Source (Top5)", "share": "비중"},
+            )
+            fig.update_traces(textposition="outside", cliponaxis=False)
+            fig.update_yaxes(tickformat=".0%", rangemode="tozero")
+            fig.update_layout(
+                margin=dict(l=30, r=30, t=50, b=30),
+                yaxis_title="전체 대비 비중",
+                xaxis_title="Traffic Source (Top5)",
+                xaxis=dict(categoryorder="array", categoryarray=share_df["trafficSource"].tolist()),
+                height=420,
             )
 
-        # 우축: Device 라인(점선)
-        for dev_name, sub in dev.groupby("deviceCategory"):
-            fig.add_trace(
-                go.Scatter(
-                    x=sub["x"], y=sub["users"],
-                    mode="lines+markers",
-                    name=f"DEV: {dev_name}",
-                    line=dict(dash="dash")
-                ),
-                secondary_y=True
-            )
+            # 넓은 레이아웃 헬퍼가 있으면 사용, 없으면 기본 렌더
+            try:
+                wide_plot(fig, key="ts_top5_share", height=420)
+            except NameError:
+                st.plotly_chart(fig, use_container_width=True, key="ts_top5_share")
 
-        fig.update_xaxes(title_text=x_label)
-        fig.update_yaxes(title_text="유니크 사용자 수 (Source Top5)", secondary_y=False)
-        fig.update_yaxes(title_text="유니크 사용자 수 (Device)",      secondary_y=True)
-
-        # 보기 좋게 천 단위 표기
-        fig.update_yaxes(ticksuffix="", separatethousands=True, secondary_y=False)
-        fig.update_yaxes(ticksuffix="", separatethousands=True, secondary_y=True)
-
-        wide_plot(fig, key="dual_unique_users_src_dev", height=460)
 
 
 
@@ -427,6 +405,7 @@ with st.container(border=True):
         fig.update_yaxes(title_text="평균 페이지뷰/세션 (Source Top5)", secondary_y=False)
         fig.update_yaxes(title_text="평균 페이지뷰/세션 (Device)",      secondary_y=True)
         wide_plot(fig, key="dual_stickiness_src_dev", height=460)
+
 
 
 
