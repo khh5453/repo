@@ -279,6 +279,73 @@ with st.container(border=True):
 
 
 
+# ============================================================
+# 7) 기간별 고착도 — Source Top5 (좌) vs Device (우)  [Dual Axis]
+#    - 좌축: trafficSource Top5의 평균 페이지뷰/세션
+#    - 우축: deviceCategory의 평균 페이지뷰/세션
+#    - 단일 일자 선택 시 '시간대별(시)', 그 외에는 '월별'
+# ============================================================
+with st.container(border=True):
+    st.subheader("7. 기간별 고착도 — Source Top5 (좌) vs Device (우)")
+
+    if dff.empty:
+        st.info("표시할 데이터가 없습니다.")
+    else:
+        df_stick = dff.copy()
+        df_stick["hour"] = df_stick["visitStartTime"].dt.hour
+        df_stick["ym"]   = df_stick["visitStartTime"].dt.to_period("M")
+
+        single_day_auto = df_stick["visitStartTime"].dt.normalize().nunique() == 1
+        time_key = "hour" if single_day_auto else "ym"
+        x_label  = "시" if single_day_auto else "년-월"
+
+        # ---- 좌축: trafficSource Top5 (세션 수 기준) ----
+        top5_sources = (df_stick.groupby("trafficSource")
+                        .size().sort_values(ascending=False).head(5).index.tolist())
+
+        src = (df_stick[df_stick["trafficSource"].isin(top5_sources)]
+               .groupby([time_key, "trafficSource"])["totalPageviews"]
+               .mean().reset_index(name="pv"))
+
+        if time_key == "ym":
+            src["x"] = src["ym"].astype(str)
+        else:
+            src["x"] = src["hour"]
+
+        # ---- 우축: deviceCategory ----
+        dev = (df_stick.groupby([time_key, "deviceCategory"])["totalPageviews"]
+               .mean().reset_index(name="pv"))
+        if time_key == "ym":
+            dev["x"] = dev["ym"].astype(str)
+        else:
+            dev["x"] = dev["hour"]
+
+        # ---- Dual Axis Figure ----
+        from plotly.subplots import make_subplots
+        fig = make_subplots(specs=[[{"secondary_y": True}]])
+
+        # 좌축: Source Top5 라인
+        for src_name, sub in src.groupby("trafficSource"):
+            fig.add_trace(
+                go.Scatter(x=sub["x"], y=sub["pv"],
+                           mode="lines+markers", name=f"SRC: {src_name}"),
+                secondary_y=False
+            )
+
+        # 우축: Device 라인(점선)
+        for dev_name, sub in dev.groupby("deviceCategory"):
+            fig.add_trace(
+                go.Scatter(x=sub["x"], y=sub["pv"],
+                           mode="lines+markers", name=f"DEV: {dev_name}",
+                           line=dict(dash="dash")),
+                secondary_y=True
+            )
+
+        fig.update_xaxes(title_text=x_label)
+        fig.update_yaxes(title_text="평균 페이지뷰/세션 (Source Top5)", secondary_y=False)
+        fig.update_yaxes(title_text="평균 페이지뷰/세션 (Device)",      secondary_y=True)
+        wide_plot(fig, key="dual_stickiness_src_dev", height=460)
+
 
 
 
