@@ -23,7 +23,7 @@ def wide_plot(fig, key=None, height=420):
         st.plotly_chart(fig, use_container_width=True, key=key)
 
 @st.cache_data
-def load_data(path: str = "google.csv"):
+def load_data(path: str = "google.csv.gz"):
     df = pd.read_csv(path)
     df["visitStartTime"] = pd.to_datetime(df["visitStartTime"], errors="coerce")
     df["ym"]   = df["visitStartTime"].dt.to_period("M")
@@ -318,3 +318,4 @@ with st.container(border=True):
     )
     fig_geo.update_yaxes(tickformat=".0%")
     wide_plot(fig_geo, key="geo_metric_plot", height=460)
+
