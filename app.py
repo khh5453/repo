@@ -23,7 +23,7 @@ def wide_plot(fig, key=None, height=420):
         st.plotly_chart(fig, use_container_width=True, key=key)
 
 @st.cache_data
-def load_data(path: str = "final.csv"):
+def load_data(path: str = "final.csv.gz"):
     df = pd.read_csv(path)
     df["visitStartTime"] = pd.to_datetime(df["visitStartTime"], errors="coerce")
     df["ym"]   = df["visitStartTime"].dt.to_period("M")
