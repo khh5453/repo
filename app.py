@@ -25,6 +25,22 @@ def wide_plot(fig, key=None, height=420):
 @st.cache_data
 def load_data(path: str = "final.csv.gz"):
     df = pd.read_csv(path)
+
+    # ID/범주형은 문자열로 고정 (정밀도·혼합타입 이슈 방지)
+    dtype_map = {
+        "fullVisitorId": "string",   # GA ID는 숫자처럼 보여도 문자열 처리 권장
+        "country": "string",
+        "city": "string",
+        "trafficSource": "string",
+        "trafficMedium": "string",
+        "trafficCampaign": "string",
+    }
+    df = pd.read_csv(path, dtype=dtype_map, low_memory=False)  # ← 핵심 두 가지
+
+    # 흔한 인덱스 잔재 컬럼 처리
+    if "Unnamed: 0" in df.columns:
+        df = df.drop(columns=["Unnamed: 0"])
+    
     df["visitStartTime"] = pd.to_datetime(df["visitStartTime"], errors="coerce")
     df["ym"]   = df["visitStartTime"].dt.to_period("M")
     df["date"] = df["visitStartTime"].dt.date
