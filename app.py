@@ -10,7 +10,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import streamlit as st
 
-st.set_page_config(page_title="사용자 행동 대시보드", layout="wide")
+st.set_page_config(page_title="Google Merchandise 활성 사용자 분석", layout="wide")
 
 def wide_plot(fig, key=None, height=420):
     fig.update_layout(
@@ -23,7 +23,7 @@ def wide_plot(fig, key=None, height=420):
         st.plotly_chart(fig, use_container_width=True, key=key)
 
 @st.cache_data
-def load_data(path: str = "google.csv.gz"):
+def load_data(path: str = "final.csv"):
     df = pd.read_csv(path)
     df["visitStartTime"] = pd.to_datetime(df["visitStartTime"], errors="coerce")
     df["ym"]   = df["visitStartTime"].dt.to_period("M")
@@ -65,23 +65,12 @@ df = df[(df["visitStartTime"] >= start_bound) & (df["visitStartTime"] < end_boun
 if "sb_open" not in st.session_state:
     st.session_state.sb_open = True
 
-# _, top_right = st.columns([0.7, 0.3])
-# with top_right:
-#     if st.button("🧰 필터 보이기/숨기기"):
-#         st.session_state.sb_open = not st.session_state.sb_open
-
 # 필터 마스크 초기화
 mask = pd.Series(True, index=df.index)
 
 if st.session_state.sb_open:
     with st.sidebar:
         st.header("📊 필터")
-
-        # 1) 년월 범위 (카테고리 슬라이더)
-        # all_months = pd.period_range(df["visitStartTime"].min(), df["visitStartTime"].max(), freq="M").astype(str).tolist()
-        # m0, m1 = st.select_slider("년월 범위", options=all_months, value=(all_months[0], all_months[-1]))
-        # p0, p1 = pd.Period(m0, "M"), pd.Period(m1, "M")
-        # mask &= df["ym"].between(p0, p1)
 
         # 2) 일자 범위 (단일/구간 모두 지원)
         min_day, max_day = df.loc[mask, "date"].min(), df.loc[mask, "date"].max()
@@ -95,26 +84,7 @@ if st.session_state.sb_open:
         # 3) 시간대 필터 (0~23)
         h0, h1 = st.slider("시간대 (시)", 0, 23, (0, 23), step=1)
         mask &= df["hour"].between(h0, h1)
-
-        # 4) 국가 → 도시 (계단식)
-        # if "country" in df.columns:
-        #     countries = sorted(df.loc[mask, "country"].dropna().unique().tolist())
-        #     sel_countries = st.multiselect("국가", countries, default=countries)
-        #     if sel_countries:
-        #         mask &= df["country"].isin(sel_countries)
-
-        # if "city" in df.columns:
-        #     cities = sorted(df.loc[mask, "city"].dropna().unique().tolist())
-        #     sel_cities = st.multiselect("도시", cities, default=cities)
-        #     if sel_cities:
-        #         mask &= df["city"].isin(sel_cities)
-
-        # 5) 캠페인
-        if "trafficCampaign" in df.columns:
-            camp_all = sorted(df.loc[mask, "trafficCampaign"].dropna().unique().tolist())
-            sel_camps = st.multiselect("캠페인 선택", camp_all, default=camp_all)
-            if sel_camps:
-                mask &= df["trafficCampaign"].isin(sel_camps)
+        
 
 # 최종 필터 적용
 dff = df.loc[mask].copy()
@@ -123,327 +93,789 @@ dff = df.loc[mask].copy()
 single_day = (d0 == d1)
 
 # -------------------- KPI --------------------
-st.title("📈 사용자 행동 대시보드")
+st.title("📈 Google Merchandise 활성 사용자 분석")
 
-total_users  = dff["fullVisitorId"].nunique()
-bounce_rate  = dff["isBounce"].mean() if len(dff) else 0
-new_rate     = (dff["isFirstVisit"] == 1).mean() if len(dff) else 0
-revisit_rate = (dff["isFirstVisit"] == 0).mean() if len(dff) else 0
-cart_conv    = (dff["addedToCart"] > 0).mean()   if len(dff) else 0
+dff['date'] = dff['visitStartTime'].dt.to_period("d")
+DAU = dff.groupby("date")["fullVisitorId"].nunique()
+dff["month"] = dff["visitStartTime"].dt.to_period("M")
+MAU = dff.groupby("month")["fullVisitorId"].nunique()
 
-k1, k2, k3, k4, k5 = st.columns(5)
-k1.metric("Unique Users (Carrying Capacity)", f"{total_users:,}")
-k2.metric("Bounce Rate (세션 단위)", f"{bounce_rate:.1%}")
-k3.metric("신규 유입 비율 (세션 단위)", f"{new_rate:.1%}")
-k4.metric("Cart 전환율 (세션 단위)", f"{cart_conv:.1%}")
-k5.metric("재방문율 (세션 단위)", f"{revisit_rate:.1%}")
+stickiness = (DAU.mean() / MAU.mean())
 
-# ============== 1) Carrying Capacity ==============
+avg_session_duration = dff["totalTimeOnSite"].mean()
+
+added_users = dff[dff["addedToCart"] == 1].groupby("date")["fullVisitorId"].nunique()
+
+cart_conversion_rate_dau = (added_users / DAU).fillna(0)
+cart_conversion_rate = cart_conversion_rate_dau.mean()
+
+# 카드 여백/텍스트 살짝 손질
+st.markdown("""
+<style>
+.kpi-card { padding: 10px 12px 4px 12px; }
+.kpi-card [data-testid="stMetric"] { margin: 0; }
+.kpi-card [data-testid="stMetricValue"]{ font-size: 1.6rem; }
+.kpi-card [data-testid="stMetricDelta"]{ font-size: 0.9rem; }
+</style>
+""", unsafe_allow_html=True)
+
+c1, c2, c3, c4, c5 = st.columns(5, gap="large")
+
+with c1:
+    with st.container(border=True):
+        st.markdown('<div class="kpi-card">', unsafe_allow_html=True)
+        st.metric("DAU (평균)", f"{int(round(DAU.mean())):,}")
+        st.caption("일별 고유 사용자 (평균)")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+with c2:
+    with st.container(border=True):
+        st.markdown('<div class="kpi-card">', unsafe_allow_html=True)
+        st.metric("MAU (평균)", f"{int(round(MAU.mean())):,}")
+        st.caption("월별 고유 사용자 (평균)")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+with c3:
+    with st.container(border=True):
+        st.markdown('<div class="kpi-card">', unsafe_allow_html=True)
+        st.metric("고착도", f"{stickiness:.1%}")
+        st.caption("DAU / MAU (평균)")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+with c4:
+    with st.container(border=True):
+        st.markdown('<div class="kpi-card">', unsafe_allow_html=True)
+        st.metric("평균 체류시간 (초)", f"{int(round(avg_session_duration)):,}")
+        st.caption("체류시간 (평균)")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+with c5:
+    with st.container(border=True):
+        st.markdown('<div class="kpi-card">', unsafe_allow_html=True)
+        st.metric("일간 카트 전환율", f"{cart_conversion_rate:.1%}")
+        st.caption("장바구니 담은 유저수 / DAU (평균)")
+        st.markdown('</div>', unsafe_allow_html=True)
+
+
+
+# ==========================================
+# (2열 배치) ⬅️ 왼쪽: 활성 사용자 & 고착도  |  오른쪽: 체류시간 / 카트 전환율 (라디오 토글)
+#  - 왼쪽 토글: 월간(MAU) / 일간(DAU) / 고착도
+#  - 오른쪽 토글: 평균 체류시간(월별) ↔ 카트 전환율(월별)
+# ==========================================
 with st.container(border=True):
-    st.subheader("1. 기간별 Carrying Capacity")
-    if single_day:
-        cap = dff.groupby("hour")["fullVisitorId"].nunique().reset_index(name="unique_users")
-        xcol, xlabel = "hour", "시"
+    # st.subheader("활성 사용자 · 고착도  vs  체류시간 / 카트 전환율")
+
+    colL, colR = st.columns(2, gap="large")
+
+    # ---------- 공통 데이터 준비 ----------
+    base_all = dff.copy() if "dff" in globals() and isinstance(dff, pd.DataFrame) else df.copy()
+    need_common = {"visitStartTime", "fullVisitorId"}
+    if base_all.empty or not need_common.issubset(base_all.columns):
+        st.info("표시할 데이터가 없습니다. (visitStartTime, fullVisitorId 필요)")
     else:
-        cap = dff.groupby("ym")["fullVisitorId"].nunique().reset_index(name="unique_users")
-        cap["ym_str"] = cap["ym"].astype(str)
-        xcol, xlabel = "ym_str", "년-월"
-    fig1 = px.line(cap, x=xcol, y="unique_users", markers=True)
-    fig1.update_layout(xaxis_title=xlabel, yaxis_title="Unique Users (명)")
-    wide_plot(fig1, key="cap", height=430)
+        base_all["visitStartTime"] = pd.to_datetime(base_all["visitStartTime"], errors="coerce")
+        base_all = base_all.dropna(subset=["visitStartTime"])
+        base_all["fullVisitorId"] = base_all["fullVisitorId"].astype(str)
+        base_all["day"]   = base_all["visitStartTime"].dt.floor("D")
+        base_all["month"] = base_all["visitStartTime"].dt.to_period("M").dt.to_timestamp(how="start")
 
-# ============== 2) Bounce + Retain (dual) ==============
+        # ===== 왼쪽: MAU/DAU/고착도 =====
+        with colL:
+            st.markdown("### 기간별 활성 사용자 & 고착도")
+
+            # MAU (월간 고유 사용자)
+            mau = (base_all.groupby("month")["fullVisitorId"]
+                          .nunique()
+                          .reset_index(name="MAU")
+                          .sort_values("month"))
+            if not mau.empty:
+                months_full = pd.date_range(mau["month"].min(), mau["month"].max(), freq="MS")
+                mau = (mau.set_index("month").reindex(months_full, fill_value=0)
+                         .rename_axis("month").reset_index())
+                mau["month_str"] = mau["month"].dt.strftime("%Y-%m")
+
+            # DAU (일간 고유 사용자)
+            dau = (base_all.groupby("day")["fullVisitorId"]
+                           .nunique()
+                           .reset_index(name="DAU")
+                           .sort_values("day"))
+            if not dau.empty:
+                days_full = pd.date_range(dau["day"].min(), dau["day"].max(), freq="D")
+                dau = (dau.set_index("day").reindex(days_full, fill_value=0)
+                         .rename_axis("day").reset_index())
+                dau["day_str"] = dau["day"].dt.strftime("%Y-%m-%d")
+
+            # 고착도 = (해당 월의 '일별 DAU 평균') / MAU
+            if not dau.empty and not mau.empty:
+                dau_avg_m = (dau.assign(month=dau["day"].dt.to_period("M").dt.to_timestamp(how="start"))
+                                .groupby("month")["DAU"].mean().reset_index(name="DAU_avg"))
+                stick = (mau.merge(dau_avg_m, on="month", how="left")
+                            .assign(stickiness=lambda x: np.where(x["MAU"]>0, x["DAU_avg"]/x["MAU"], np.nan)))
+                stick["month_str"] = stick["month"].dt.strftime("%Y-%m")
+            else:
+                stick = pd.DataFrame(columns=["month", "month_str", "stickiness"])
+
+            viewL = st.radio("보기", ("월간(MAU)", "일간(DAU)", "고착도"),
+                             index=0, horizontal=True, key="left_mau_dau_stick")
+
+            if viewL == "월간(MAU)":
+                plot_df, xcol, ycol = mau, "month_str", "MAU"
+                ytitle = "MAU (월간 고유 사용자)"
+            elif viewL == "일간(DAU)":
+                plot_df, xcol, ycol = dau, "day_str", "DAU"
+                ytitle = "DAU (일간 고유 사용자)"
+            else:
+                plot_df, xcol, ycol = stick, "month_str", "stickiness"
+                ytitle = "고착도 (월평균 DAU / MAU)"
+
+            if plot_df.empty:
+                st.info("선택한 보기 모드에 데이터가 없습니다.")
+            else:
+                figL = px.line(plot_df, x=xcol, y=ycol, markers=True,
+                               labels={xcol: "기간", ycol: ytitle})
+                if viewL == "고착도":
+                    figL.update_yaxes(tickformat=".0%")
+                    figL.update_traces(hovertemplate="%{x}<br>"+ytitle+": %{y:.1%}<extra></extra>")
+                else:
+                    figL.update_yaxes(rangemode="tozero", separatethousands=True)
+                    figL.update_traces(hovertemplate="%{x}<br>"+ytitle+": %{y:,}<extra></extra>")
+                figL.update_layout(height=420, margin=dict(l=10, r=10, t=30, b=10), showlegend=False)
+                st.plotly_chart(figL, use_container_width=True, key="plot_left_mau_dau_stick")
+
+        # ===== 오른쪽: 평균 체류시간(월) / 카트 전환율(월) 토글 =====
+        with colR:
+            st.markdown("### 기간별 체류시간 & 카트 전환율")
+
+            need_right = {"totalTimeOnSite", "addedToCart"}
+            if not need_right.issubset(base_all.columns):
+                st.info("totalTimeOnSite 또는 addedToCart 컬럼이 없어 표시할 수 없습니다.")
+            else:
+                base_all["totalTimeOnSite"] = pd.to_numeric(base_all["totalTimeOnSite"], errors="coerce")
+                base_all["addedToCart"]     = pd.to_numeric(base_all["addedToCart"], errors="coerce").fillna(0)
+
+                viewR = st.radio("보기", ("평균 체류시간(월별)", "카트 전환율(월별)"),
+                                 index=0, horizontal=True, key="right_dwell_cart_toggle")
+
+                if viewR == "평균 체류시간(월별)":
+                    # 월별 평균 체류시간(초 → 분)
+                    grp = (base_all.groupby("month")["totalTimeOnSite"]
+                                   .mean().reset_index(name="avg_sec")
+                                   .sort_values("month"))
+                    if grp.empty:
+                        st.info("데이터가 없습니다.")
+                    else:
+                        months_full = pd.date_range(grp["month"].min(), grp["month"].max(), freq="MS")
+                        grp = (grp.set_index("month").reindex(months_full)
+                                 .rename_axis("month").reset_index())
+                        grp["avg_min"] = grp["avg_sec"] / 60.0
+                        grp["x"] = grp["month"].dt.strftime("%Y-%m")
+
+                        figR = px.line(grp, x="x", y="avg_min", markers=True,
+                                       custom_data=["avg_sec"],
+                                       labels={"x": "월", "avg_min": "평균 체류시간(분)"})
+                        figR.update_traces(
+                            hovertemplate="%{x}<br>평균 체류시간: %{y:.1f}분 (%{customdata[0]:.0f}초)<extra></extra>"
+                        )
+                        figR.update_yaxes(rangemode="tozero")
+
+                else:  # "카트 전환율(월별)"
+                    # 월별 활성 사용자(MAU)
+                    mau = base_all.groupby("month")["fullVisitorId"].nunique()
+                    # 월별 장바구니 추가 사용자(고유)
+                    add_m = base_all.loc[base_all["addedToCart"] > 0] \
+                                     .groupby("month")["fullVisitorId"].nunique()
+
+                    if mau.empty:
+                        st.info("데이터가 없습니다.")
+                    else:
+                        months_full = pd.date_range(mau.index.min(), mau.index.max(), freq="MS")
+                        mau = mau.reindex(months_full, fill_value=0)
+                        add_m = add_m.reindex(months_full, fill_value=0)
+
+                        rate = np.where(mau > 0, add_m / mau, 0.0)
+                        out = pd.DataFrame({
+                            "period": months_full,
+                            "rate": rate,
+                            "added_users": add_m.values,
+                            "active_users": mau.values
+                        })
+                        out["x"] = out["period"].dt.strftime("%Y-%m")
+
+                        figR = px.line(
+                            out, x="x", y="rate", markers=True,
+                            labels={"x": "월", "rate": "카트 전환율(월간)"}
+                        )
+                        figR.update_yaxes(tickformat=".0%", rangemode="tozero")
+                        figR.update_traces(
+                            hovertemplate=(
+                                "%{x}<br>"
+                                "카트 전환율: %{y:.1%}<br>"
+                                "장바구니 추가 사용자: %{customdata[0]:,}명<br>"
+                                "활성 사용자: %{customdata[1]:,}명<extra></extra>"
+                            ),
+                            customdata=out[["added_users", "active_users"]].to_numpy()
+                        )
+
+                if 'figR' in locals():
+                    figR.update_layout(height=420, margin=dict(l=10, r=10, t=30, b=10), showlegend=False)
+                    st.plotly_chart(figR, use_container_width=True, key="plot_right_dwell_or_cart")
+
+
+
+
+
+
+# ==========================================
+# (2열 배치) ⬅️ 왼쪽: 국가별 MAU/DAU/고착도  |  오른쪽: 국가별 체류시간/카트전환율 (월별)
+#  - 공통: Top10 국가 중 멀티선택 (한 번만 선택해서 양쪽 그래프에 적용)
+#  - 왼쪽 토글: MAU(월) / DAU(일) / 고착도(월)
+#  - 오른쪽 토글: 평균 체류시간(분, 월별) / 카트 전환율(월별, 고유 사용자 기준)
+# ==========================================
 with st.container(border=True):
-    st.subheader("2. 기간별 Bounce Rate + Retain Rate (이중축)")
-    if single_day:
-        br = dff.groupby("hour")["isBounce"].mean().reset_index().rename(columns={"isBounce":"bounce_rate"})
-        br["retain_rate"] = 1 - br["bounce_rate"]; xcol="hour"; xlabel="시"
+
+    base = dff.copy() if "dff" in globals() and isinstance(dff, pd.DataFrame) else df.copy()
+    need = {"visitStartTime", "fullVisitorId", "country"}
+    if base.empty or not need.issubset(base.columns):
+        st.info("표시할 데이터가 없습니다. (visitStartTime, fullVisitorId, country 필요)")
     else:
-        br = dff.groupby("ym")["isBounce"].mean().reset_index().rename(columns={"isBounce":"bounce_rate"})
-        br["retain_rate"] = 1 - br["bounce_rate"]; br["ym_str"]=br["ym"].astype(str); xcol="ym_str"; xlabel="년-월"
-    fig2 = make_subplots(specs=[[{"secondary_y": True}]])
-    fig2.add_trace(go.Scatter(x=br[xcol], y=br["bounce_rate"], mode="lines+markers", name="Bounce Rate"), secondary_y=False)
-    fig2.add_trace(go.Scatter(x=br[xcol], y=br["retain_rate"], mode="lines+markers", name="Retain Rate"), secondary_y=True)
-    fig2.update_xaxes(title_text=xlabel)
-    fig2.update_yaxes(title_text="Bounce Rate", tickformat=".0%", secondary_y=False)
-    fig2.update_yaxes(title_text="Retain Rate", tickformat=".0%", secondary_y=True)
-    wide_plot(fig2, key="bounce_retain", height=430)
+        # ---- 공통 전처리 ----
+        base["visitStartTime"] = pd.to_datetime(base["visitStartTime"], errors="coerce")
+        base = base.dropna(subset=["visitStartTime", "country"])
+        base["fullVisitorId"] = base["fullVisitorId"].astype(str)
+        base["country"] = base["country"].astype(str)
+        base["month"] = base["visitStartTime"].dt.to_period("M").dt.to_timestamp(how="start")
+        base["day"]   = base["visitStartTime"].dt.floor("D")
 
-# ============== 3) 캠페인별 재방문율 ==============
-with st.container(border=True):
-    st.subheader("3. 캠페인 진행여부별 재방문율 (세션 단위)")
-    rev = (dff.assign(revisit=(dff["isFirstVisit"] == 0).astype(int))
-              .groupby("campaign_flag")["revisit"].mean().reset_index())
-    fig3 = px.bar(rev, x="campaign_flag", y="revisit", text_auto=".1%")
-    fig3.update_layout(xaxis_title="캠페인 진행 여부", yaxis_title="재방문율 (세션 단위)")
-    fig3.update_yaxes(tickformat=".0%")
-    wide_plot(fig3, key="revisit_campaign", height=420)
+        # Top10 국가 (전체 기간 고유 사용자 기준)
+        top10 = (
+            base.groupby("country")["fullVisitorId"]
+                .nunique()
+                .sort_values(ascending=False)
+                .head(10)
+                .index.tolist()
+        )
 
-# ============== 4) Cart Conversion (dual) ==============
-with st.container(border=True):
-    st.subheader("4. 기간별 Cart 전환율 + 캠페인 진행에 따른 전환율 (이중축)")
-    dff_cart = dff.assign(cart=(dff["addedToCart"] > 0).astype(int))
-    if single_day:
-        all_line  = dff_cart.groupby("hour")["cart"].mean().reset_index(); all_line_x="hour"; xlabel="시"
-        by_flag   = dff_cart.groupby(["hour","campaign_flag"])["cart"].mean().reset_index(); split_key="hour"
-    else:
-        all_line  = dff_cart.groupby("ym")["cart"].mean().reset_index(); all_line["ym_str"]=all_line["ym"].astype(str); all_line_x="ym_str"; xlabel="년-월"
-        by_flag   = dff_cart.groupby(["ym","campaign_flag"])["cart"].mean().reset_index(); by_flag["ym_str"]=by_flag["ym"].astype(str); split_key="ym_str"
-    fig4 = make_subplots(specs=[[{"secondary_y": True}]])
-    fig4.add_trace(go.Scatter(x=all_line[all_line_x], y=all_line["cart"], mode="lines+markers", name="전체 전환율"), secondary_y=False)
-    for cf, sub in by_flag.groupby("campaign_flag"):
-        fig4.add_trace(go.Scatter(x=sub[split_key], y=sub["cart"], mode="lines+markers", name=f"{cf} 전환율", line=dict(dash="dash")), secondary_y=True)
-    fig4.update_xaxes(title_text=xlabel)
-    fig4.update_yaxes(title_text="전체 전환율", tickformat=".0%", secondary_y=False)
-    fig4.update_yaxes(title_text="캠페인별 전환율", tickformat=".0%", secondary_y=True)
-    wide_plot(fig4, key="cart_dual", height=440)
-
-# ============== 5) Stickiness (pageviews mean) ==============
-with st.container(border=True):
-    st.subheader("5. 고착도 (평균 페이지뷰 기준, 세션 단위)")
-    if single_day:
-        stick = dff.groupby("hour")["totalPageviews"].mean().reset_index(); xcol="hour"; xlabel="시"
-    else:
-        stick = dff.groupby("ym")["totalPageviews"].mean().reset_index(); stick["ym_str"]=stick["ym"].astype(str); xcol="ym_str"; xlabel="년-월"
-    fig5 = px.line(stick, x=xcol, y="totalPageviews", markers=True,
-                   labels={xcol: xlabel, "totalPageviews": "평균 페이지뷰/세션"})
-    wide_plot(fig5, key="stickiness", height=420)
-
-
-# ============================================================
-# trafficSource Top5 비중 (월별)
-#  - y축: 월별 비중 = 해당 소스 세션수 / 해당 월 총 세션수
-#  - x축: 년-월
-#  - Top5는 현재 필터(dff) 기준 전체 기간 합계 상위 5개
-# ============================================================
-with st.container(border=True):
-    st.subheader("trafficSource Top5 비중 (월별)")
-
-    needed = {"trafficSource", "visitStartTime"}
-    if dff.empty or not needed.issubset(dff.columns):
-        st.info("표시할 데이터가 없습니다. (필수 컬럼 누락 또는 필터 결과 없음)")
-    else:
-        df_src = dff.copy()
-        # 안전 파싱
-        df_src["visitStartTime"] = pd.to_datetime(df_src["visitStartTime"], errors="coerce")
-        df_src = df_src.dropna(subset=["visitStartTime"])
-        if df_src.empty:
-            st.info("표시할 데이터가 없습니다. (유효한 visitStartTime 없음)")
+        if not top10:
+            st.info("Top10 국가가 없습니다.")
         else:
-            df_src["ym"] = df_src["visitStartTime"].dt.to_period("M")
-            df_src["trafficSource"] = (
-                df_src["trafficSource"].astype(str).fillna("(unknown)").replace({"": "(unknown)"})
+            # 하나만 보여 공통 적용
+            sel_countries = st.multiselect(
+                "국가 선택 (Top10)", options=top10, default=top10[:3], key="country_top10_shared"
             )
+            countries = sel_countries if sel_countries else top10
+            sub = base[base["country"].isin(countries)].copy()
 
-            # Top5 산출 (전체 기간 합계 상위 5개)
-            top5 = (
+            if sub.empty:
+                st.info("선택한 국가에 데이터가 없습니다.")
+            else:
+                # 누락 기간 보정용 축
+                months = pd.date_range(sub["month"].min(), sub["month"].max(), freq="MS")
+                days   = pd.date_range(sub["day"].min(),   sub["day"].max(),   freq="D")
+                mi_month_country = pd.MultiIndex.from_product([months, countries], names=["month", "country"])
+                mi_day_country   = pd.MultiIndex.from_product([days,   countries], names=["day",   "country"])
+
+                colL, colR = st.columns(2, gap="large")
+
+                # ========== ⬅️ 왼쪽: MAU / DAU / 고착도 ==========
+                with colL:
+                    st.markdown("### 국가별 활성 사용자 & 고착도")
+
+                    # MAU
+                    mau = (
+                        sub.groupby(["month", "country"])["fullVisitorId"]
+                           .nunique().reset_index(name="mau")
+                           .set_index(["month", "country"])
+                           .reindex(mi_month_country, fill_value=0)
+                           .reset_index()
+                    )
+                    mau["month_str"] = mau["month"].dt.strftime("%Y-%m")
+
+                    # DAU
+                    dau = (
+                        sub.groupby(["day", "country"])["fullVisitorId"]
+                           .nunique().reset_index(name="dau")
+                           .set_index(["day", "country"])
+                           .reindex(mi_day_country, fill_value=0)
+                           .reset_index()
+                    )
+                    dau["day_str"] = dau["day"].dt.strftime("%Y-%m-%d")
+
+                    # 고착도 = (월평균 DAU) / MAU
+                    dau_avg_m = (
+                        dau.assign(month=dau["day"].dt.to_period("M").dt.to_timestamp(how="start"))
+                           .groupby(["month", "country"])["dau"]
+                           .mean().reset_index(name="dau_avg")
+                           .set_index(["month", "country"])
+                           .reindex(mi_month_country, fill_value=0)
+                           .reset_index()
+                    )
+                    stick = mau.merge(dau_avg_m, on=["month", "country"], how="left")
+                    stick["stickiness"] = np.where(stick["mau"] > 0, stick["dau_avg"] / stick["mau"], np.nan)
+                    stick["month_str"] = stick["month"].dt.strftime("%Y-%m")
+
+                    viewL = st.radio("보기", ("MAU(월별)", "DAU(일별)", "고착도(월별)"),
+                                     index=0, horizontal=True, key="country_left_view")
+
+                    if viewL == "MAU(월별)":
+                        plot_df, xcol, ycol = mau, "month_str", "mau"
+                        ytitle, yfmt_pct = "MAU (월간 고유 사용자)", False
+                    elif viewL == "DAU(일별)":
+                        plot_df, xcol, ycol = dau, "day_str", "dau"
+                        ytitle, yfmt_pct = "DAU (일별 고유 사용자)", False
+                    else:
+                        plot_df, xcol, ycol = stick, "month_str", "stickiness"
+                        ytitle, yfmt_pct = "고착도 (월평균 DAU / MAU)", True
+
+                    figL = px.line(
+                        plot_df, x=xcol, y=ycol,
+                        color="country", markers=True,
+                        labels={xcol: "기간", ycol: ytitle, "country": "국가"}
+                    )
+                    figL.update_layout(
+                        height=420, margin=dict(l=10, r=10, t=30, b=10),
+                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+                    )
+                    if yfmt_pct:
+                        figL.update_yaxes(tickformat=".0%")
+                        figL.update_traces(hovertemplate="%{x}<br>%{fullData.name}<br>"+ytitle+": %{y:.1%}<extra></extra>")
+                    else:
+                        figL.update_yaxes(rangemode="tozero", separatethousands=True)
+                        figL.update_traces(hovertemplate="%{x}<br>%{fullData.name}<br>"+ytitle+": %{y:,}<extra></extra>")
+
+                    try:
+                        wide_plot(figL, key="country_left_mau_dau_stick", height=420)
+                    except NameError:
+                        st.plotly_chart(figL, use_container_width=True, key="country_left_mau_dau_stick")
+
+                # ========== ➡️ 오른쪽: 체류시간 / 카트 전환율 ==========
+                with colR:
+                    st.markdown("### 국가별 체류시간 & 카트 전환율")
+
+                    need_right = {"totalTimeOnSite", "addedToCart"}
+                    if not need_right.issubset(sub.columns):
+                        st.info("totalTimeOnSite 또는 addedToCart 컬럼이 없어 표시할 수 없습니다.")
+                    else:
+                        sub["totalTimeOnSite"] = pd.to_numeric(sub["totalTimeOnSite"], errors="coerce")
+                        sub["addedToCart"]     = pd.to_numeric(sub["addedToCart"], errors="coerce").fillna(0)
+
+                        viewR = st.radio("보기", ("평균 체류시간(분)", "카트 전환율"),
+                                         index=0, horizontal=True, key="country_right_view")
+
+                        # 평균 체류시간(분)
+                        dwell = (
+                            sub.groupby(["month", "country"])["totalTimeOnSite"]
+                               .mean().reset_index(name="avg_sec")
+                               .set_index(["month", "country"])
+                               .reindex(mi_month_country)
+                               .reset_index()
+                        )
+                        dwell["value"] = dwell["avg_sec"] / 60.0
+                        dwell["month_str"] = dwell["month"].dt.strftime("%Y-%m")
+
+                        # 카트 전환율(고유 사용자 기준)
+                        active = (
+                            sub.groupby(["month", "country"])["fullVisitorId"]
+                               .nunique().reset_index(name="active_users")
+                               .set_index(["month", "country"])
+                               .reindex(mi_month_country, fill_value=0)
+                        )
+                        added  = (
+                            sub[sub["addedToCart"] > 0]
+                               .groupby(["month", "country"])["fullVisitorId"]
+                               .nunique().reset_index(name="added_users")
+                               .set_index(["month", "country"])
+                               .reindex(mi_month_country, fill_value=0)
+                        )
+                        conv = (active.join(added, how="left").fillna(0).reset_index())
+                        conv["rate"] = np.where(conv["active_users"] > 0,
+                                                conv["added_users"] / conv["active_users"], 0.0)
+                        conv["month_str"] = conv["month"].dt.strftime("%Y-%m")
+
+                        if viewR == "평균 체류시간(분)":
+                            plot_df = dwell.copy()
+                            ycol, ytitle, yfmt_pct = "value", "평균 체류시간(분)", False
+                        else:
+                            plot_df = conv.copy()
+                            ycol, ytitle, yfmt_pct = "rate", "카트 전환율", True
+
+                        figR = px.line(
+                            plot_df, x="month_str", y=ycol,
+                            color="country", markers=True,
+                            labels={"month_str": "월", ycol: ytitle, "country": "국가"}
+                        )
+                        figR.update_layout(
+                            height=420, margin=dict(l=10, r=10, t=30, b=10),
+                            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+                        )
+                        if yfmt_pct:
+                            figR.update_yaxes(tickformat=".0%")
+                            figR.update_traces(
+                                hovertemplate=("%{x}<br>%{fullData.name}<br>"
+                                               + ytitle + ": %{y:.1%}<extra></extra>")
+                            )
+                        else:
+                            figR.update_yaxes(rangemode="tozero")
+                            figR.update_traces(
+                                hovertemplate=("%{x}<br>%{fullData.name}<br>"
+                                               + ytitle + ": %{y:.1f}분<extra></extra>")
+                            )
+
+                        try:
+                            wide_plot(figR, key="country_right_dwell_cart", height=420)
+                        except NameError:
+                            st.plotly_chart(figR, use_container_width=True, key="country_right_dwell_cart")
+
+
+
+
+# ==========================================
+# (2열 배치) ⬅️ 왼쪽: 6개 국가 × Traffic Medium 개수  |  오른쪽: Traffic Medium 추이(이중축)
+#  - 왼쪽 토글: 그룹막대 / 누적막대
+#  - 오른쪽 토글: 월별 / 일별
+# ==========================================
+from plotly.subplots import make_subplots
+
+with st.container(border=True):
+
+    base = dff.copy() if "dff" in globals() and isinstance(dff, pd.DataFrame) else df.copy()
+    need_left  = {"country", "trafficMedium"}
+    need_right = {"visitStartTime", "trafficMedium"}
+
+    if base.empty or not (need_left | need_right).issubset(base.columns):
+        st.info("표시할 데이터가 없습니다. (country, trafficMedium, visitStartTime 필요)")
+    else:
+        # 공통 전처리
+        base["country"]       = base["country"].astype(str)
+        base["trafficMedium"] = base["trafficMedium"].astype(str)
+
+        # ✅ none / (not set) / not set / (none) / cpc / cpm 제거 (대소문자/공백 무시)
+        drop_set = {"none", "(not set)", "not set", "(none)", "cpc", "cpm"}
+        tm_norm = base["trafficMedium"].str.strip().str.lower()
+        base = base[~tm_norm.isin(drop_set)].copy()
+
+        colL, colR = st.columns(2, gap="large")
+
+        # ========== ⬅️ 왼쪽: 6개 국가 × Traffic Medium 개수 ==========
+        with colL:
+            st.markdown("### 국가별 유입 경로")
+
+            # 🇰🇷→🇺🇸 매핑(데이터셋 표기)
+            country_map = {
+                "미국": "United States",
+                "인도": "India",
+                "베트남": "Vietnam",
+                "태국": "Thailand",
+                "터키": "Turkey",
+                "브라질": "Brazil",
+            }
+            countries_order = [country_map[k] for k in ["미국", "인도", "베트남", "태국", "터키", "브라질"]]
+
+            # 실제 존재하는 6개만 사용
+            countries_present = [c for c in countries_order if c in base["country"].unique().tolist()]
+            sub_left = base[base["country"].isin(countries_present)].copy()
+
+            if sub_left.empty:
+                st.info("선택한 6개 국가 중 데이터가 없습니다.")
+            else:
+                # 공백 medium 정리
+                sub_left["trafficMedium"] = sub_left["trafficMedium"].str.strip().replace({"": "(unknown)"})
+
+                mediums = sorted(sub_left["trafficMedium"].unique().tolist())
+                mi = pd.MultiIndex.from_product([countries_present, mediums], names=["country", "trafficMedium"])
+                counts = (
+                    sub_left.groupby(["country", "trafficMedium"])
+                            .size()
+                            .reindex(mi, fill_value=0)
+                            .reset_index(name="count")
+                )
+
+                # ✅ 국가 정렬: 총 count 합계 기준 내림차순
+                country_order = (counts.groupby("country")["count"]
+                                 .sum()
+                                 .sort_values(ascending=False)
+                                 .index.tolist())
+
+                # (옵션) ✅ 범례(trafficMedium)도 합계 기준 내림차순으로
+                medium_order = (counts.groupby("trafficMedium")["count"]
+                                .sum()
+                                .sort_values(ascending=False)
+                                .index.tolist())
+
+                # ✅ 카테고리 순서 고정
+                counts["country"] = pd.Categorical(counts["country"],
+                                                   categories=country_order,
+                                                   ordered=True)
+
+                mode = st.radio("표시 방식", ("그룹막대", "누적막대"),
+                                index=0, horizontal=True, key="bar_mode_medium_l")
+
+                # ✅ x축/범례 순서를 category_orders로 확정
+                fig_left = px.bar(
+                    counts,  # 이미 카테고리 순서 고정 → 추가 sort 불필요
+                    x="country", y="count", color="trafficMedium",
+                    text="count",
+                    labels={"country": "Country", "count": "Count", "trafficMedium": "Traffic Medium"},
+                    category_orders={
+                        "country": country_order,
+                        "trafficMedium": medium_order,  # 필요 없으면 이 줄만 주석 처리
+                    },
+                )
+                fig_left.update_traces(texttemplate="%{text:,}", textposition="outside", cliponaxis=False)
+                fig_left.update_layout(
+                    barmode="group" if mode == "그룹막대" else "relative",
+                    height=420,
+                    margin=dict(l=10, r=10, t=30, b=10),
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                )
+                fig_left.update_yaxes(rangemode="tozero", separatethousands=True)
+                fig_left.update_traces(hovertemplate="%{x}<br>%{fullData.name}<br>Count: %{y:,}<extra></extra>")
+                st.plotly_chart(fig_left, use_container_width=True, key="country6_medium_counts_col")
+
+
+
+        # ========== ➡️ 오른쪽: Traffic Medium 추이(이중축) ==========
+        with colR:
+            st.markdown("### 유입 경로별 추이")
+
+            sub_right = base.copy()
+            # 시간 컬럼
+            sub_right["visitStartTime"] = pd.to_datetime(sub_right["visitStartTime"], errors="coerce")
+            sub_right = sub_right.dropna(subset=["visitStartTime"])
+            # medium 표준화
+            sub_right["medium_norm"] = sub_right["trafficMedium"].str.strip().str.lower()
+
+            target_set = {"referral", "organic", "affiliate"}
+            sub_right = sub_right[sub_right["medium_norm"].isin(target_set)]
+
+            if sub_right.empty:
+                st.info("'referral' / 'organic' / 'affiliate' 데이터가 없습니다.")
+            else:
+                sub_right["day"]   = sub_right["visitStartTime"].dt.floor("D")
+                sub_right["month"] = sub_right["visitStartTime"].dt.to_period("M").dt.to_timestamp(how="start")
+
+                view = st.radio("보기", ("월별", "일별"), index=0, horizontal=True, key="tm_view_dual_r")
+                if view == "월별":
+                    time_col = "month"; xfmt = "%Y-%m"; freq = "MS"
+                else:
+                    time_col = "day";   xfmt = "%Y-%m-%d"; freq = "D"
+
+                agg = (
+                    sub_right.groupby([time_col, "medium_norm"])
+                             .size().reset_index(name="sessions")
+                )
+                all_times = pd.date_range(agg[time_col].min(), agg[time_col].max(), freq=freq)
+
+                mediums = ["referral", "organic", "affiliate"]
+                mi = pd.MultiIndex.from_product([all_times, mediums], names=[time_col, "medium_norm"])
+                agg_full = (
+                    agg.set_index([time_col, "medium_norm"])
+                       .reindex(mi, fill_value=0)
+                       .reset_index()
+                       .rename(columns={time_col: "t"})
+                )
+                agg_full["x"] = agg_full["t"].dt.strftime(xfmt)
+
+                fig_right = make_subplots(specs=[[{"secondary_y": True}]])
+                # 좌축: referral, organic
+                for name, dash in [("referral", None), ("organic", "dot")]:
+                    line_df = agg_full[agg_full["medium_norm"] == name]
+                    if not line_df.empty:
+                        fig_right.add_trace(
+                            go.Scatter(
+                                x=line_df["x"], y=line_df["sessions"],
+                                mode="lines+markers",
+                                name=name.capitalize(),
+                                line=dict(dash=dash) if dash else None
+                            ),
+                            secondary_y=False
+                        )
+                # 우축: affiliate
+                aff_df = agg_full[agg_full["medium_norm"] == "affiliate"]
+                if not aff_df.empty:
+                    fig_right.add_trace(
+                        go.Scatter(
+                            x=aff_df["x"], y=aff_df["sessions"],
+                            mode="lines+markers",
+                            name="Affiliate",
+                            line=dict(width=2)
+                        ),
+                        secondary_y=True
+                    )
+
+                fig_right.update_xaxes(title_text="기간")
+                fig_right.update_yaxes(title_text="Sessions (referral / organic)", secondary_y=False)
+                fig_right.update_yaxes(title_text="Sessions (affiliate)", secondary_y=True)
+                fig_right.update_traces(hovertemplate="%{x}<br>%{fullData.name}: %{y:,}<extra></extra>")
+                fig_right.update_layout(
+                    height=420,
+                    margin=dict(l=10, r=10, t=30, b=10),
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+                )
+                st.plotly_chart(fig_right, use_container_width=True, key="tm_ref_org_aff_dual_col")
+
+
+
+
+
+# ==========================================
+# (2열 배치) ⬅️ 왼쪽: trafficSource Top3 비중(월별)  |  ➡️ 오른쪽: 국가별 세션수 — Direct·YouTube·Google
+# ==========================================
+with st.container(border=True):
+
+    if "dff" in globals() and isinstance(dff, pd.DataFrame):
+        base = dff.copy()
+    else:
+        base = df.copy()
+
+    # 공통 안전 체크
+    need_left  = {"trafficSource", "visitStartTime"}
+    need_right = {"country", "trafficSource"}
+    if base.empty or not (need_left | need_right).issubset(base.columns):
+        st.info("표시할 데이터가 없습니다. (visitStartTime, trafficSource, country 필요)")
+    else:
+        # 공통 전처리
+        base["visitStartTime"] = pd.to_datetime(base["visitStartTime"], errors="coerce")
+        base = base.dropna(subset=["visitStartTime"])
+        base["trafficSource"]  = base["trafficSource"].astype(str).fillna("(unknown)").replace({"": "(unknown)"})
+        base["country"]        = base["country"].astype(str)
+
+        colL, colR = st.columns(2, gap="large")
+
+        # -----------------------------
+        # ⬅️ 왼쪽: trafficSource Top3 비중 (월별)
+        # -----------------------------
+        with colL:
+            st.markdown("### 기간별 Traffic Source Top3")
+
+            df_src = base.copy()
+            df_src["ym"] = df_src["visitStartTime"].dt.to_period("M")
+
+            # Top3 산출 (전체 기간 합계 상위 3개)
+            top3 = (
                 df_src["trafficSource"]
                 .value_counts(dropna=False)
-                .head(5)
+                .head(3)
                 .index
                 .tolist()
             )
 
-            # 월별 소스별 세션 수
-            monthly_src = (
-                df_src[df_src["trafficSource"].isin(top5)]
-                .groupby(["ym", "trafficSource"])
-                .size()
-                .rename("cnt")
-                .reset_index()
-            )
-            if monthly_src.empty:
-                st.info("선택된 기간/필터에 해당하는 Top5 소스 데이터가 없습니다.")
+            if not top3:
+                st.info("Top3 소스를 찾지 못했습니다.")
             else:
-                # 월별 전체 세션 수
-                monthly_total = df_src.groupby("ym").size().rename("total").reset_index()
-
-                # 비중 계산 = cnt / total
-                merged = monthly_src.merge(monthly_total, on="ym", how="left")
-                merged["share"] = np.where(merged["total"] > 0, merged["cnt"] / merged["total"], 0.0)
-
-                # 모든 월 인덱스 포함(빈 달 0으로 채움) → 라인 끊김 방지
-                all_months = pd.period_range(df_src["ym"].min(), df_src["ym"].max(), freq="M")
-                piv = (
-                    merged.pivot(index="ym", columns="trafficSource", values="share")
-                    .reindex(all_months)
-                    .fillna(0.0)
+                # 월별 소스별 세션 수
+                monthly_src = (
+                    df_src[df_src["trafficSource"].isin(top3)]
+                    .groupby(["ym", "trafficSource"])
+                    .size()
+                    .rename("cnt")
+                    .reset_index()
                 )
 
-                # 그림용 문자열 축 준비
-                piv["ym_str"] = piv.index.astype(str)
-                long = piv.reset_index(drop=True).melt(id_vars="ym_str", var_name="trafficSource", value_name="share")
+                if monthly_src.empty:
+                    st.info("선택된 기간/필터에 해당하는 소스 데이터가 없습니다.")
+                else:
+                    # 월별 전체 세션 수
+                    monthly_total = df_src.groupby("ym").size().rename("total").reset_index()
 
-                # 시각화
-                fig = px.line(
-                    long,
-                    x="ym_str",
-                    y="share",
-                    color="trafficSource",
-                    markers=True,
-                    labels={"ym_str": "년-월", "share": "비중", "trafficSource": "Traffic Source (Top5)"},
-                )
-                fig.update_yaxes(tickformat=".0%", rangemode="tozero")
-                fig.update_traces(hovertemplate="%{x}<br>%{legendgroup}: %{y:.1%}<extra></extra>")
-                fig.update_layout(
-                    legend_title_text="Traffic Source (Top5)",
-                    xaxis_title="년-월",
-                    yaxis_title="전체 대비 비중",
-                    margin=dict(l=30, r=30, t=50, b=30),
-                    xaxis=dict(categoryorder="array", categoryarray=sorted(long["ym_str"].unique())),
-                )
+                    # 비중 계산 = cnt / total
+                    merged = monthly_src.merge(monthly_total, on="ym", how="left")
+                    merged["share"] = np.where(merged["total"] > 0, merged["cnt"] / merged["total"], 0.0)
 
-                try:
-                    wide_plot(fig, key="ts_top5_share_monthly", height=440)
-                except NameError:
-                    st.plotly_chart(fig, use_container_width=True, key="ts_top5_share_monthly")
+                    # 누락 월 0 채우기 → 라인 끊김 방지
+                    all_months = pd.period_range(df_src["ym"].min(), df_src["ym"].max(), freq="M")
+                    piv = (
+                        merged.pivot(index="ym", columns="trafficSource", values="share")
+                              .reindex(all_months)
+                              .fillna(0.0)
+                    )
+                    piv["ym_str"] = piv.index.astype(str)
+                    long = (
+                        piv.reset_index(drop=True)
+                           .melt(id_vars="ym_str", var_name="trafficSource", value_name="share")
+                    )
 
+                    figL = px.line(
+                        long,
+                        x="ym_str",
+                        y="share",
+                        color="trafficSource",
+                        markers=True,
+                        labels={"ym_str": "년-월", "share": "비중", "trafficSource": "Traffic Source (Top3)"},
+                    )
+                    figL.update_yaxes(tickformat=".0%", rangemode="tozero")
+                    figL.update_traces(hovertemplate="%{x}<br>%{legendgroup}: %{y:.1%}<extra></extra>")
+                    figL.update_layout(
+                        height=420,
+                        margin=dict(l=10, r=10, t=30, b=10),
+                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                        xaxis=dict(categoryorder="array", categoryarray=sorted(long["ym_str"].unique())),
+                    )
+                    st.plotly_chart(figL, use_container_width=True, key="ts_top3_share_monthly_col")
 
+        # -----------------------------
+        # ➡️ 오른쪽: 국가별 세션수 — Direct · YouTube · Google (정규화 매칭)
+        # -----------------------------
+        with colR:
+            st.markdown("### 국가별 Traffic Source Top3")
 
+            # 지정 6개 국가 (데이터에 존재하는 것만 사용)
+            country_map = {
+                "미국": "United States",
+                "인도": "India",
+                "베트남": "Vietnam",
+                "태국": "Thailand",
+                "터키": "Turkey",
+                "브라질": "Brazil",
+            }
+            countries_order = [country_map[k] for k in ["미국", "인도", "베트남", "태국", "터키", "브라질"]]
+            present = [c for c in countries_order if c in base["country"].unique().tolist()]
 
+            sub = base[base["country"].isin(present)].copy()
+            if sub.empty:
+                st.info("선택한 6개 국가 중 데이터가 없습니다.")
+            else:
+                # trafficSource 정규화(부분매칭)
+                src_lower = sub["trafficSource"].str.lower().str.strip()
+                sub["src3"] = "(other)"
+                sub.loc[src_lower.str.contains("direct",  na=False), "src3"] = "Direct"
+                sub.loc[src_lower.str.contains("youtube", na=False), "src3"] = "YouTube"
+                sub.loc[src_lower.str.contains("google",  na=False), "src3"] = "Google"
+                sub = sub[sub["src3"].isin(["Direct", "YouTube", "Google"])]
 
+                if sub.empty:
+                    st.info("Direct / YouTube / Google 데이터가 없습니다.")
+                else:
+                    # 모든 (국가 × 소스) 조합 0 채우기
+                    mi = pd.MultiIndex.from_product([present, ["Direct", "YouTube", "Google"]],
+                                                    names=["country", "src3"])
+                    counts = (
+                        sub.groupby(["country", "src3"])
+                        .size()
+                        .reindex(mi, fill_value=0)
+                        .reset_index(name="count")
+                    )
+                    counts["country"] = pd.Categorical(counts["country"], categories=present, ordered=True)
 
-# ============================================================
-# 6) 기간별 카트 전환율 (Dual): trafficSource Top5 vs deviceCategory
-#    - 좌축: trafficSource Top5 라인
-#    - 우축: deviceCategory 라인(Desktop/Mobile/Tablet 등)
-#    - 단일 일자 선택 시 '시간대별(시)', 다중 일자/기간이면 '월별'
-# ============================================================
-with st.container(border=True):
-    st.subheader("6. 기간별 카트 전환율 — Source Top5 (좌) vs Device (우)")
+                    figR = px.bar(
+                        counts.sort_values(["country", "count"], ascending=[True, False]),
+                        x="country", y="count", color="src3", text="count",
+                        category_orders={"country": present, "src3": ["Direct", "YouTube", "Google"]},
+                        labels={"country": "Country", "count": "Sessions", "src3": "Traffic Source"},
+                        # 🔴🟦 색상 지정: Direct(미지정=기존색 유지), YouTube=빨간색, Google=하늘색
+                        color_discrete_map={"Direct" : "#046aca", "YouTube": "red", "Google": "skyblue"},
+                    )
 
-    if dff.empty:
-        st.info("표시할 데이터가 없습니다.")
-    else:
-        # 시간 축 결정 (단일 일자면 시간대, 아니면 월)
-        single_day_auto = dff["visitStartTime"].dt.normalize().nunique() == 1
-        dff = dff.assign(hour=dff["visitStartTime"].dt.hour,
-                         ym=dff["visitStartTime"].dt.to_period("M"))
-        time_key = "hour" if single_day_auto else "ym"
-        x_label  = "시" if single_day_auto else "년-월"
+                    figR.update_traces(texttemplate="%{text:,}", textposition="outside", cliponaxis=False)
+                    figR.update_yaxes(rangemode="tozero", separatethousands=True)
+                    figR.update_layout(
+                        barmode="group",
+                        height=420,
+                        margin=dict(l=10, r=10, t=30, b=10),
+                        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                    )
 
-        # 카트 전환 플래그
-        dff_cart = dff.assign(cart=(dff["addedToCart"] > 0).astype(int))
-
-        # trafficSource Top5 (세션 수 기준)
-        top5_sources = (dff_cart.groupby("trafficSource")["cart"]
-                        .size().sort_values(ascending=False).head(5).index.tolist())
-        ts = (dff_cart[dff_cart["trafficSource"].isin(top5_sources)]
-              .groupby([time_key, "trafficSource"])["cart"]
-              .mean().reset_index())
-        if time_key == "ym":
-            ts["x"] = ts["ym"].astype(str)
-        else:
-            ts["x"] = ts["hour"]
-
-        # deviceCategory
-        dc = (dff_cart.groupby([time_key, "deviceCategory"])["cart"]
-              .mean().reset_index())
-        if time_key == "ym":
-            dc["x"] = dc["ym"].astype(str)
-        else:
-            dc["x"] = dc["hour"]
-
-        # ---- Dual Axis Figure ----
-        from plotly.subplots import make_subplots
-        fig = make_subplots(specs=[[{"secondary_y": True}]])
-
-        # 좌축: Source Top5
-        for src, sub in ts.groupby("trafficSource"):
-            fig.add_trace(
-                go.Scatter(x=sub["x"], y=sub["cart"],
-                           mode="lines+markers", name=f"SRC: {src}"),
-                secondary_y=False
-            )
-
-        # 우축: Device
-        for dev, sub in dc.groupby("deviceCategory"):
-            fig.add_trace(
-                go.Scatter(x=sub["x"], y=sub["cart"],
-                           mode="lines+markers", name=f"DEV: {dev}",
-                           line=dict(dash="dash")),
-                secondary_y=True
-            )
-
-        fig.update_xaxes(title_text=x_label)
-        fig.update_yaxes(title_text="카트 전환율 (Source Top5)", tickformat=".0%", secondary_y=False)
-        fig.update_yaxes(title_text="카트 전환율 (Device)",      tickformat=".0%", secondary_y=True)
-        wide_plot(fig, key="dual_cart_src_dev", height=460)
-
-
-
-# ============================================================
-# 7) 기간별 고착도 — Source Top5 (좌) vs Device (우)  [Dual Axis]
-#    - 좌축: trafficSource Top5의 평균 페이지뷰/세션
-#    - 우축: deviceCategory의 평균 페이지뷰/세션
-#    - 단일 일자 선택 시 '시간대별(시)', 그 외에는 '월별'
-# ============================================================
-with st.container(border=True):
-    st.subheader("7. 기간별 고착도 — Source Top5 (좌) vs Device (우)")
-
-    if dff.empty:
-        st.info("표시할 데이터가 없습니다.")
-    else:
-        df_stick = dff.copy()
-        df_stick["hour"] = df_stick["visitStartTime"].dt.hour
-        df_stick["ym"]   = df_stick["visitStartTime"].dt.to_period("M")
-
-        single_day_auto = df_stick["visitStartTime"].dt.normalize().nunique() == 1
-        time_key = "hour" if single_day_auto else "ym"
-        x_label  = "시" if single_day_auto else "년-월"
-
-        # ---- 좌축: trafficSource Top5 (세션 수 기준) ----
-        top5_sources = (df_stick.groupby("trafficSource")
-                        .size().sort_values(ascending=False).head(5).index.tolist())
-
-        src = (df_stick[df_stick["trafficSource"].isin(top5_sources)]
-               .groupby([time_key, "trafficSource"])["totalPageviews"]
-               .mean().reset_index(name="pv"))
-
-        if time_key == "ym":
-            src["x"] = src["ym"].astype(str)
-        else:
-            src["x"] = src["hour"]
-
-        # ---- 우축: deviceCategory ----
-        dev = (df_stick.groupby([time_key, "deviceCategory"])["totalPageviews"]
-               .mean().reset_index(name="pv"))
-        if time_key == "ym":
-            dev["x"] = dev["ym"].astype(str)
-        else:
-            dev["x"] = dev["hour"]
-
-        # ---- Dual Axis Figure ----
-        from plotly.subplots import make_subplots
-        fig = make_subplots(specs=[[{"secondary_y": True}]])
-
-        # 좌축: Source Top5 라인
-        for src_name, sub in src.groupby("trafficSource"):
-            fig.add_trace(
-                go.Scatter(x=sub["x"], y=sub["pv"],
-                           mode="lines+markers", name=f"SRC: {src_name}"),
-                secondary_y=False
-            )
-
-        # 우축: Device 라인(점선)
-        for dev_name, sub in dev.groupby("deviceCategory"):
-            fig.add_trace(
-                go.Scatter(x=sub["x"], y=sub["pv"],
-                           mode="lines+markers", name=f"DEV: {dev_name}",
-                           line=dict(dash="dash")),
-                secondary_y=True
-            )
-
-        fig.update_xaxes(title_text=x_label)
-        fig.update_yaxes(title_text="평균 페이지뷰/세션 (Source Top5)", secondary_y=False)
-        fig.update_yaxes(title_text="평균 페이지뷰/세션 (Device)",      secondary_y=True)
-        wide_plot(fig, key="dual_stickiness_src_dev", height=460)
-
-
-
-
-
-
+                    st.plotly_chart(figR, use_container_width=True, key="country6_src3_counts_norm_col")
 
 
 
